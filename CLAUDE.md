@@ -26,6 +26,7 @@ Single FastAPI process serving:
 - REST API at `/api/v1/*`
 - MCP server at `/mcp` (Streamable HTTP via FastMCP)
 - Health check at `/health`
+- Auto-documentation at `/docs` (Swagger, for humans), `/openapi.json` (OpenAPI 3.0, for agents), `/api/v1/docs/tools` (MCP tool catalog, for agents)
 
 ### Three-Tier Access Model
 
@@ -81,7 +82,13 @@ infra/terraform/      -- GCP infrastructure
 
 ### New MCP tool
 1. Add tool function inside `register()` in `src/mcp/tools.py`
-2. Call same service layer as REST
+2. Add `register_tool(ToolEntry(...))` call for the discovery catalog
+3. Call same service layer as REST
+
+### Auto-documentation
+- Pydantic response models and docstrings on routes are auto-included in OpenAPI spec and Swagger UI
+- MCP tools must be registered in both the FastMCP server and the discovery catalog (`src/mcp/registry.py`)
+- No manual doc build step -- everything is generated at runtime from code
 
 ### Access control
 - Free: no decorator

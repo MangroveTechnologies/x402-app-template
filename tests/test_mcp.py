@@ -10,6 +10,7 @@ def test_mcp_server_creates_successfully():
     assert server.name == "gcp-app-template"
 
 
-def test_mcp_server_has_expected_name():
-    server = create_mcp_server()
-    assert server is not None
+def test_mcp_server_is_singleton():
+    server1 = create_mcp_server()
+    server2 = create_mcp_server()
+    assert server1 is server2

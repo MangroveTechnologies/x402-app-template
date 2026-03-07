@@ -5,11 +5,13 @@ os.environ["ENVIRONMENT"] = "test"
 import pytest
 from fastapi.testclient import TestClient
 
+from src.app import app
+from src.services.items import clear_items
+
 
 @pytest.fixture
 def client():
-    # Force reimport to pick up test environment
-    import importlib
-    import src.app
-    importlib.reload(src.app)
-    return TestClient(src.app.app)
+    clear_items()
+    with TestClient(app) as c:
+        yield c
+    clear_items()

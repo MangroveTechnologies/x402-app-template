@@ -4,11 +4,22 @@ Mounted at /mcp on the FastAPI app via Streamable HTTP transport.
 """
 from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("gcp-app-template")
+_mcp_server = None
 
 
 def create_mcp_server() -> FastMCP:
-    """Create and configure the MCP server with all tools registered."""
+    """Create and configure the MCP server with all tools registered.
+
+    Idempotent -- returns the same server instance on repeated calls
+    to avoid duplicate tool registration warnings.
+    """
+    global _mcp_server
+    if _mcp_server is not None:
+        return _mcp_server
+
+    _mcp_server = FastMCP("gcp-app-template")
+
     from src.mcp.tools import register
-    register(mcp)
-    return mcp
+    register(_mcp_server)
+
+    return _mcp_server

@@ -1,6 +1,6 @@
 # gcp-app-template
 
-FastAPI + MCP service template for GCP Cloud Run. Dual protocol (REST + MCP), three-tier access control (free, auth-gated, x402-gated), Terraform IaC, OIDC CI/CD.
+FastAPI + MCP service template for GCP Cloud Run. Dual protocol (REST + MCP), three-tier access control (free, auth-gated, x402-gated), auto-documentation, Terraform IaC, OIDC CI/CD.
 
 Designed for agents first, humans second.
 
@@ -12,10 +12,10 @@ Designed for agents first, humans second.
 git clone https://github.com/MangroveTechnologies/gcp-app-template.git my-service
 cd my-service
 
-# Agent-friendly (non-interactive):
+# For agents (non-interactive):
 ./init.sh --name my-service --gcp-project my-gcp-project --region us-central1
 
-# Human-friendly (interactive):
+# For humans (interactive):
 ./init-interactive.sh
 ```
 
@@ -48,6 +48,61 @@ curl http://localhost:8080/api/v1/easter-egg
 curl http://localhost:8080/api/v1/easter-egg -H "X-API-Key: dev-key-1"
 ```
 
+## Discovery and Documentation
+
+Both agents and humans can discover the full API programmatically. All discovery endpoints are free, no auth required.
+
+### For Agents
+
+| Endpoint | Format | What it provides |
+|----------|--------|-----------------|
+| `GET /openapi.json` | OpenAPI 3.0 JSON | Full REST API spec -- every route, parameter, response model |
+| `GET /api/v1/docs/tools` | JSON | MCP tool catalog -- names, parameters, access tiers, pricing |
+
+An agent should call these two endpoints to fully understand the service before making any other requests or connecting via MCP.
+
+**Example: discover MCP tools**
+```bash
+curl http://localhost:8080/api/v1/docs/tools | python3 -m json.tool
+```
+
+Returns:
+```json
+{
+  "tools": [
+    {
+      "name": "echo",
+      "description": "Echo a message back. Free, no auth required.",
+      "access": "free",
+      "parameters": [{"name": "message", "type": "string", "required": false}]
+    },
+    {
+      "name": "easter_egg",
+      "description": "Get the easter egg message. Costs $0.05 USDC on Base, or free with API key.",
+      "access": "x402",
+      "price": "$0.05 USDC",
+      "network": "base",
+      "parameters": []
+    }
+  ],
+  "total": 5,
+  "access_tiers": {
+    "free": "No credentials required",
+    "auth": "Requires X-API-Key header",
+    "x402": "Requires x402 payment (or API key for free access)"
+  }
+}
+```
+
+### For Humans
+
+| Endpoint | What it provides |
+|----------|-----------------|
+| `/docs` | Swagger UI -- interactive API explorer with try-it-out |
+| `/redoc` | ReDoc -- clean API reference documentation |
+
+Open `http://localhost:8080/docs` in a browser to explore the API interactively.
+
 ## What You Get
 
 ### Architecture
@@ -55,16 +110,19 @@ curl http://localhost:8080/api/v1/easter-egg -H "X-API-Key: dev-key-1"
 ```
 FastAPI app (port 8080)
   |
-  +-- /health              (free)
-  +-- /api/v1/*             (REST endpoints)
-  |     +-- /echo           (free -- request reflection)
-  |     +-- /items/*        (auth-gated -- CRUD demo)
-  |     +-- /easter-egg     (x402-gated -- $0.05 USDC on Base)
+  +-- /health                  (free)
+  +-- /docs                    (Swagger UI -- for humans)
+  +-- /openapi.json            (OpenAPI 3.0 spec -- for agents)
+  +-- /api/v1/*                (REST endpoints)
+  |     +-- /docs/tools        (MCP tool catalog -- for agents)
+  |     +-- /echo              (free -- request reflection)
+  |     +-- /items/*           (auth-gated -- CRUD demo)
+  |     +-- /easter-egg        (x402-gated -- $0.05 USDC on Base)
   |
-  +-- /mcp                  (MCP Streamable HTTP transport)
-        +-- echo            (free)
-        +-- items_*         (auth-gated)
-        +-- easter_egg      (x402-gated)
+  +-- /mcp                     (MCP Streamable HTTP transport)
+        +-- echo               (free)
+        +-- items_*            (auth-gated)
+        +-- easter_egg         (x402-gated)
 ```
 
 ### Three-Tier Access Model
@@ -83,6 +141,7 @@ API key holders get full access to everything. Public agents pay per-call via x4
 |-----------|-----------|
 | Framework | FastAPI + uvicorn |
 | MCP | FastMCP (Streamable HTTP at /mcp) |
+| Documentation | OpenAPI 3.0 (auto-generated from code) |
 | Database | PostgreSQL 16 (Cloud SQL in prod) |
 | Cache | Redis 7 |
 | Auth | API key (X-API-Key header) |
@@ -104,15 +163,27 @@ API key holders get full access to everything. Public agents pay per-call via x4
    api_router.include_router(your_router, tags=["your-tag"])
    ```
 
+Pydantic response models and docstrings on your route functions are automatically picked up by the OpenAPI spec and Swagger UI. No extra documentation step needed.
+
 ### MCP tool
 
-1. Add tool functions in `src/mcp/tools.py` inside the `register()` function:
+1. Add tool function in `src/mcp/tools.py` inside `register()`:
    ```python
    @server.tool()
    async def your_tool(param: str) -> str:
        """Description for agents."""
        result = your_service_function(param)
        return json.dumps(result)
+   ```
+
+2. Add catalog entry for agent discovery:
+   ```python
+   register_tool(ToolEntry(
+       name="your_tool",
+       description="Description for agents.",
+       access="free",  # or "auth" or "x402"
+       parameters=[ToolParam(name="param", type="string", required=True)],
+   ))
    ```
 
 ### Access control
@@ -170,6 +241,7 @@ src/
   api/
     router.py               -- REST router (/api/v1)
     routes/
+      docs.py               -- MCP tool catalog endpoint
       echo.py               -- Free echo endpoint
       items.py              -- Auth-gated CRUD
       easter_egg.py         -- x402-gated endpoint
@@ -179,6 +251,7 @@ src/
   mcp/
     server.py               -- FastMCP server
     tools.py                -- MCP tool definitions
+    registry.py             -- Tool discovery catalog
   shared/
     types.py                -- Pydantic base model
     auth/
@@ -198,11 +271,11 @@ src/
     *.json                  -- Per-env config files
 tests/
   conftest.py               -- Fixtures
-  test_*.py                 -- Test files
+  test_*.py                 -- Test files (30 tests)
 infra/terraform/            -- Terraform IaC
 .github/workflows/          -- CI/CD
-init.sh                     -- Bootstrap (agent-friendly)
-init-interactive.sh         -- Bootstrap (human-friendly)
+init.sh                     -- Bootstrap (for agents)
+init-interactive.sh         -- Bootstrap (for humans)
 ```
 
 ## License

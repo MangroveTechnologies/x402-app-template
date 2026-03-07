@@ -7,6 +7,7 @@ import hashlib
 
 from fastapi import APIRouter, Header
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from src.shared.auth.middleware import has_valid_api_key
 from src.shared.x402.config import (
@@ -17,6 +18,12 @@ from src.shared.x402.models import PaymentOption, PaymentRequirements
 from src.services.easter_egg import get_easter_egg
 
 router = APIRouter()
+
+
+class EasterEggResponse(BaseModel):
+    """Easter egg message response."""
+    message: str = Field(description="Thank-you message for supporters")
+    timestamp: str = Field(description="Server timestamp (ISO 8601)")
 
 
 def _build_requirements() -> PaymentRequirements:
@@ -37,7 +44,18 @@ def _build_requirements() -> PaymentRequirements:
     )
 
 
-@router.get("/easter-egg")
+@router.get(
+    "/easter-egg",
+    response_model=EasterEggResponse,
+    summary="Easter egg (x402-gated)",
+    description="Returns a thank-you message. Costs $0.05 USDC on Base for public agents. "
+    "API key holders get free access. Returns 402 with payment requirements if no "
+    "credentials are provided.",
+    responses={
+        200: {"description": "Easter egg message (authenticated or paid)"},
+        402: {"description": "Payment required -- includes x402 payment options"},
+    },
+)
 async def easter_egg(
     x_api_key: str = Header(None, alias="X-API-Key"),
     x_payment_signature: str = Header(None, alias="X-Payment-Signature"),
