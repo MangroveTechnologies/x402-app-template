@@ -11,13 +11,11 @@ Flow:
 5. Server verifies via facilitator -> content delivered -> settled on-chain
 
 Requirements:
-- ENVIRONMENT env var set (defaults to "local")
 - src/config/local-config.json exists with x402 settings
-- WALLET_SECRET env var or in MangroveMarkets/.env
-- Wallet funded with USDC on the configured network
+- WALLET_SECRET env var set to a funded EVM private key
 
 Usage:
-    ENVIRONMENT=local python scripts/test_x402_mainnet.py
+    WALLET_SECRET=0x... python scripts/test_x402_mainnet.py
 """
 import asyncio
 import base64
@@ -33,40 +31,25 @@ os.environ.setdefault("ENVIRONMENT", "local")
 
 
 def load_wallet_secret():
-    """Load wallet secret from env or MangroveMarkets/.env."""
-    secret = os.environ.get("WALLET_SECRET")
-    if secret:
-        return secret
-
-    env_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-        "MangroveMarkets", ".env",
-    )
-    if os.path.exists(env_path):
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    value = value.strip().strip('"').strip("'")
-                    if key.strip() == "WALLET_SECRET":
-                        return value
-    return None
+    """Load wallet secret from WALLET_SECRET env var."""
+    return os.environ.get("WALLET_SECRET")
 
 
 async def main():
     # Load app config (same config the app uses)
-    from src.config import app_config
     from src.shared.x402.config import (
-        get_facilitator_url, get_network, get_pay_to,
-        get_usdc_contract, get_easter_egg_price,
-        get_cdp_api_key_id, get_cdp_api_key_secret,
+        get_cdp_api_key_id,
+        get_cdp_api_key_secret,
+        get_easter_egg_price,
+        get_facilitator_url,
+        get_network,
+        get_pay_to,
     )
 
     wallet_secret = load_wallet_secret()
     if not wallet_secret:
         print("ERROR: WALLET_SECRET not found.")
-        print("Set it as env var or in MangroveMarkets/.env")
+        print("Export WALLET_SECRET=0x... before running this script")
         sys.exit(1)
 
     facilitator_url = get_facilitator_url()
@@ -84,15 +67,16 @@ async def main():
 
     # -- Step 1: Create server app with x402 middleware --
     print("--- Step 1: Create server ---")
+
     from fastapi import FastAPI, Request
-    from x402.http.middleware.fastapi import payment_middleware
-    from x402.http import HTTPFacilitatorClient
-    from x402.http.facilitator_client_base import FacilitatorConfig, CreateHeadersAuthProvider
     from x402 import x402ResourceServer
+    from x402.http import HTTPFacilitatorClient
+    from x402.http.facilitator_client_base import CreateHeadersAuthProvider, FacilitatorConfig
+    from x402.http.middleware.fastapi import payment_middleware
+    from x402.http.types import PaymentOption as HTTPPaymentOption
+    from x402.http.types import RouteConfig
     from x402.mechanisms.evm.exact import register_exact_evm_server
     from x402.mechanisms.evm.exact.server import ExactEvmScheme
-    from x402.http.types import RouteConfig, PaymentOption as HTTPPaymentOption
-    from datetime import datetime, timezone
 
     # Build auth provider if CDP keys are configured
     auth_provider = None
@@ -100,7 +84,8 @@ async def main():
     cdp_key_secret = get_cdp_api_key_secret()
     if cdp_key_id and cdp_key_secret:
         from urllib.parse import urlparse
-        from cdp.auth import get_auth_headers, GetAuthHeadersOptions
+
+        from cdp.auth import GetAuthHeadersOptions, get_auth_headers
         parsed = urlparse(facilitator_url)
 
         def create_headers():
@@ -175,12 +160,12 @@ async def main():
     # -- Step 3: Make paid request --
     print()
     print("--- Step 3: Make paid request ---")
+    import httpx
     from eth_account import Account
     from x402 import x402Client
-    from x402.mechanisms.evm.signers import EthAccountSigner
-    from x402.mechanisms.evm.exact import register_exact_evm_client
     from x402.http.clients.httpx import x402AsyncTransport
-    import httpx
+    from x402.mechanisms.evm.exact import register_exact_evm_client
+    from x402.mechanisms.evm.signers import EthAccountSigner
 
     account = Account.from_key(wallet_secret)
     print(f"  Wallet: {account.address}")

@@ -8,56 +8,42 @@ Usage:
 
 Requires:
     - src/config/local-config.json with x402 settings
-    - WALLET_SECRET env var or in MangroveMarkets/.env
+    - WALLET_SECRET env var set to a funded EVM private key
 """
 import asyncio
 import base64
 import json
 import os
 import sys
-from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ.setdefault("ENVIRONMENT", "local")
 
 
 def load_wallet_secret():
-    """Load wallet secret from env or MangroveMarkets/.env."""
-    secret = os.environ.get("WALLET_SECRET")
-    if secret:
-        return secret
-
-    env_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-        "MangroveMarkets", ".env",
-    )
-    if os.path.exists(env_path):
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    value = value.strip().strip('"').strip("'")
-                    if key.strip() == "WALLET_SECRET":
-                        return value
-    return None
+    """Load wallet secret from WALLET_SECRET env var."""
+    return os.environ.get("WALLET_SECRET")
 
 
 def setup_server():
     """Create the FastAPI app with x402 middleware using app config."""
-    from src.config import app_config
-    from src.shared.x402.config import (
-        get_facilitator_url, get_network, get_pay_to,
-        get_cdp_api_key_id, get_cdp_api_key_secret,
-    )
     from fastapi import FastAPI, Request
-    from x402.http.middleware.fastapi import payment_middleware
-    from x402.http import HTTPFacilitatorClient
-    from x402.http.facilitator_client_base import FacilitatorConfig, CreateHeadersAuthProvider
     from x402 import x402ResourceServer
+    from x402.http import HTTPFacilitatorClient
+    from x402.http.facilitator_client_base import CreateHeadersAuthProvider, FacilitatorConfig
+    from x402.http.middleware.fastapi import payment_middleware
+    from x402.http.types import PaymentOption as HTTPPaymentOption
+    from x402.http.types import RouteConfig
     from x402.mechanisms.evm.exact import register_exact_evm_server
     from x402.mechanisms.evm.exact.server import ExactEvmScheme
-    from x402.http.types import RouteConfig, PaymentOption as HTTPPaymentOption
+
+    from src.shared.x402.config import (
+        get_cdp_api_key_id,
+        get_cdp_api_key_secret,
+        get_facilitator_url,
+        get_network,
+        get_pay_to,
+    )
 
     facilitator_url = get_facilitator_url()
     network = get_network()
@@ -69,7 +55,8 @@ def setup_server():
     cdp_key_secret = get_cdp_api_key_secret()
     if cdp_key_id and cdp_key_secret:
         from urllib.parse import urlparse
-        from cdp.auth import get_auth_headers, GetAuthHeadersOptions
+
+        from cdp.auth import GetAuthHeadersOptions, get_auth_headers
         parsed = urlparse(facilitator_url)
 
         def create_headers():
@@ -174,9 +161,9 @@ async def main():
     print()
 
     from x402 import x402Client
-    from x402.mechanisms.evm.signers import EthAccountSigner
-    from x402.mechanisms.evm.exact import register_exact_evm_client
     from x402.http.clients.httpx import x402AsyncTransport
+    from x402.mechanisms.evm.exact import register_exact_evm_client
+    from x402.mechanisms.evm.signers import EthAccountSigner
 
     x402_client = x402Client()
     register_exact_evm_client(x402_client, EthAccountSigner(account))
