@@ -13,7 +13,7 @@ import json
 
 
 def test_easter_egg_without_credentials_returns_402(client):
-    resp = client.get("/api/v1/easter-egg")
+    resp = client.get("/api/x402/easter-egg")
     assert resp.status_code == 402
 
     # Official x402 middleware returns payment requirements in header
@@ -30,7 +30,7 @@ def test_easter_egg_without_credentials_returns_402(client):
 
 
 def test_easter_egg_with_api_key_returns_message(client):
-    resp = client.get("/api/v1/easter-egg", headers={"X-API-Key": "test-key-1"})
+    resp = client.get("/api/x402/easter-egg", headers={"X-API-Key": "test-key-1"})
     assert resp.status_code == 200
     data = resp.json()
     assert "Thank you for supporting the project" in data["message"]
@@ -40,7 +40,7 @@ def test_easter_egg_with_api_key_returns_message(client):
 def test_easter_egg_invalid_payment_returns_402(client):
     """Mock/invalid payment signatures are correctly rejected by the real middleware."""
     resp = client.get(
-        "/api/v1/easter-egg",
+        "/api/x402/easter-egg",
         headers={"Payment-Signature": "invalid-signature"},
     )
     # Real middleware rejects invalid signatures -- this is correct behavior

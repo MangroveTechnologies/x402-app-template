@@ -37,36 +37,36 @@ When an agent calls your API, instead of checking a subscription or API key, the
 
 This template gives you a working service with that flow built in, plus everything you need to build your own x402-enabled API:
 
-- 💰 **x402 payments** -- Working endpoint that charges $0.05 USDC on Base via the [Coinbase facilitator](https://docs.cdp.coinbase.com/x402/welcome)
-- 🔑 **API key auth** -- Subscribers bypass payments entirely
-- 🔓 **Free endpoints** -- Health, echo, docs -- always open
-- 🤖 **Dual protocol** -- REST (`/api/v1/*`) and MCP (`/mcp`) on one port
-- 📖 **Auto-docs** -- Swagger UI, OpenAPI 3.0, and MCP tool catalog generated from code
-- ☁️ **Deploy-ready** -- Dockerfile, Terraform (GCP Cloud Run), GitHub Actions CI/CD
-- 🐘 **Optional database** -- PostgreSQL + Redis available via Docker profiles when you need them
+- :moneybag: **x402 payments** -- Working endpoint that accepts USDC on Base via the [Coinbase facilitator](https://docs.cdp.coinbase.com/x402/welcome)
+- :key: **API key auth** -- Subscribers bypass payments entirely
+- :unlock: **Free endpoints** -- Health, echo, docs -- always open
+- :robot: **Dual protocol** -- REST (`/api/v1/*`) and MCP (`/mcp`) on one port
+- :book: **Auto-docs** -- Swagger UI, OpenAPI 3.0, and MCP tool catalog generated from code
+- :cloud: **Deploy-ready** -- Dockerfile, Terraform (GCP Cloud Run), GitHub Actions CI/CD
+- :elephant: **Optional database** -- PostgreSQL + Redis available via Docker profiles when you need them
 
 <details>
-<summary>📋 Table of Contents</summary>
+<summary>:clipboard: Table of Contents</summary>
 
-- [Quick Start](#-quick-start)
-- [Try the x402 Endpoint](#-try-the-x402-endpoint)
-- [Three-Tier Access Model](#-three-tier-access-model)
-- [Discovery & Documentation](#-discovery--documentation)
-- [x402 Payment Configuration](#-x402-payment-configuration)
-- [Architecture](#-architecture)
-- [Adding Your Own Endpoints](#-adding-your-own-endpoints)
-- [Full Stack Mode](#-full-stack-mode)
-- [Deploy to GCP](#-deploy-to-gcp)
-- [Configuration Reference](#-configuration-reference)
-- [Project Structure](#-project-structure)
-- [Built With](#-built-with)
-- [License](#-license)
+- [Quick Start](#rocket-quick-start)
+- [Try the x402 Endpoint](#moneybag-try-the-x402-endpoint)
+- [Three-Tier Access Model](#closed_lock_with_key-three-tier-access-model)
+- [Discovery & Documentation](#book-discovery--documentation)
+- [x402 Configuration](#gear-x402-configuration)
+- [Architecture](#building_construction-architecture)
+- [Adding Your Own Endpoints](#heavy_plus_sign-adding-your-own-endpoints)
+- [Full Stack Mode](#elephant-full-stack-mode)
+- [Deploy to GCP](#cloud-deploy-to-gcp)
+- [Configuration Reference](#pencil-configuration-reference)
+- [Project Structure](#open_file_folder-project-structure)
+- [Built With](#hammer_and_wrench-built-with)
+- [License](#page_facing_up-license)
 
 </details>
 
 ---
 
-## 🚀 Quick Start
+## :rocket: Quick Start
 
 All you need is [Docker](https://docs.docker.com/get-docker/). No GCP account, no database, no blockchain wallet.
 
@@ -79,11 +79,11 @@ cd x402-app-template
 
 **2. Create your local config**
 
-The template ships with an example config that's ready to run on the x402.org testnet facilitator. Copy it to create your local config file (which is gitignored -- your secrets and project-specific settings go here):
-
 ```bash
 cp src/config/local-example-config.json src/config/local-config.json
 ```
+
+This creates your local config file, which is gitignored. The default config uses the **Base Sepolia testnet** -- no real money, safe to experiment with.
 
 **3. Start the service**
 
@@ -101,68 +101,88 @@ You should see `{"status": "healthy", ...}`. That's it -- you're running.
 
 ---
 
-## 💰 Try the x402 Endpoint
+## :moneybag: Try the x402 Endpoint
 
-The template includes a live x402-gated endpoint at `/api/v1/easter-egg`. This is a real payment endpoint -- when called without credentials, it responds with HTTP 402 and tells the caller exactly how to pay $0.05 USDC on Base.
+The template includes a live x402-gated endpoint at `/api/x402/easter-egg`. When called without credentials, it responds with HTTP 402 and the payment details a client needs to complete the transaction.
+
+### Testnet (default)
+
+The quick start config uses Base Sepolia testnet. No real money involved.
 
 **Hit the endpoint with no credentials:**
 
 ```bash
-curl -s http://localhost:8080/api/v1/easter-egg | python3 -m json.tool
+curl -s http://localhost:8080/api/x402/easter-egg | python3 -m json.tool
 ```
 
-You'll get back a `402 Payment Required` response containing:
-- The **network** to pay on (`eip155:84532` for Base Sepolia testnet)
-- The **USDC contract** address
-- The **deposit address** where payment goes
-- The **amount** in base units (50000 = $0.05)
-- The **facilitator URL** that verifies and settles the payment
+The 402 response includes the network, asset contract, amount, and facilitator URL. This is everything an x402-enabled client needs to sign a payment and retry the request. The [Coinbase x402 SDK](https://github.com/coinbase/x402) handles this automatically.
 
-This is everything an x402-enabled client needs. The [Coinbase x402 SDK](https://github.com/coinbase/x402) handles the rest automatically -- sign the payment, retry the request, receive the content.
-
-**Now try with an API key** (subscribers get free access):
+**With an API key** (subscribers get free access):
 
 ```bash
-curl -s http://localhost:8080/api/v1/easter-egg -H "X-API-Key: dev-key-1"
+curl -s http://localhost:8080/api/x402/easter-egg -H "X-API-Key: dev-key-1"
 ```
 
-> 💡 **Want to make a real payment?** See `scripts/test_x402_mainnet.py` for a working end-to-end example using the Coinbase x402 SDK with a funded wallet.
+### Mainnet
+
+Once you've verified the flow on testnet, switch to Base mainnet by updating `X402_FACILITATOR_URL` in your `local-config.json`:
+
+```json
+{
+  "X402_FACILITATOR_URL": "https://api.cdp.coinbase.com/platform/v2/x402",
+  "X402_NETWORK": "eip155:8453",
+  "X402_USDC_CONTRACT": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "X402_CDP_API_KEY_ID": "your-cdp-key-id",
+  "X402_CDP_API_KEY_SECRET": "your-cdp-key-secret"
+}
+```
+
+Restart and hit the same endpoint:
+
+```bash
+docker compose restart app
+curl -s http://localhost:8080/api/x402/easter-egg | python3 -m json.tool
+```
+
+Same endpoint, same 402 response -- but now the payment requirements point to Base mainnet and real USDC. CDP API keys are available from the [Coinbase Developer Platform](https://docs.cdp.coinbase.com/). See [docs/configuration.md](docs/configuration.md) for the full setup guide.
+
+> :warning: **Always verify on testnet first.** The testnet facilitator uses test USDC on Base Sepolia -- no real funds at risk.
 
 ---
 
-## 🔐 Three-Tier Access Model
+## :closed_lock_with_key: Three-Tier Access Model
 
-Every endpoint in the template falls into one of three tiers:
+Every endpoint falls into one of three tiers:
 
 | Tier | No credentials | API key | x402 payment |
 |:-----|:--------------|:--------|:-------------|
-| 🔓 **Free** | ✅ | ✅ | ✅ |
-| 🔑 **Auth-gated** | ❌ 401 | ✅ | ❌ 401 |
-| 💰 **x402-gated** | 💳 402 + payment details | ✅ Free | ✅ Paid |
+| :unlock: **Free** | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| :key: **Auth-gated** | :x: 401 | :white_check_mark: | :x: 401 |
+| :moneybag: **x402-gated** | :credit_card: 402 + payment details | :white_check_mark: Free | :white_check_mark: Paid |
 
 **API key holders get everything for free.** Public agents pay per-call for x402 endpoints. Free endpoints are always open.
 
 Try all three:
 
 ```bash
-# 🔓 Free -- no credentials needed
+# :unlock: Free -- no credentials needed
 curl http://localhost:8080/api/v1/echo?hello=world
 
-# 🔑 Auth-gated -- 401 without key, 201 with key
+# :key: Auth-gated -- 401 without key, 201 with key
 curl -s http://localhost:8080/api/v1/items
 curl -X POST http://localhost:8080/api/v1/items \
   -H "Content-Type: application/json" \
   -H "X-API-Key: dev-key-1" \
   -d '{"name":"Widget"}'
 
-# 💰 x402-gated -- 402 without credentials, 200 with key
-curl -s http://localhost:8080/api/v1/easter-egg
-curl -s http://localhost:8080/api/v1/easter-egg -H "X-API-Key: dev-key-1"
+# :moneybag: x402-gated -- 402 without credentials, 200 with key
+curl -s http://localhost:8080/api/x402/easter-egg
+curl -s http://localhost:8080/api/x402/easter-egg -H "X-API-Key: dev-key-1"
 ```
 
 ---
 
-## 📖 Discovery & Documentation
+## :book: Discovery & Documentation
 
 All discovery endpoints are free. No auth required.
 
@@ -174,7 +194,6 @@ All discovery endpoints are free. No auth required.
 | `GET /api/v1/docs/tools` | JSON | Every MCP tool with access tier, parameters, and pricing |
 
 ```bash
-# See all available MCP tools, what they cost, and how to call them
 curl -s http://localhost:8080/api/v1/docs/tools | python3 -m json.tool
 ```
 
@@ -182,64 +201,73 @@ curl -s http://localhost:8080/api/v1/docs/tools | python3 -m json.tool
 
 | Endpoint | What you get |
 |:---------|:------------|
-| `/docs` | 🖥️ Swagger UI -- interactive API explorer |
-| `/redoc` | 📄 ReDoc -- clean reference docs |
+| `/docs` | :desktop_computer: Swagger UI -- interactive API explorer |
+| `/redoc` | :page_facing_up: ReDoc -- clean reference docs |
 
 Open [http://localhost:8080/docs](http://localhost:8080/docs) in your browser.
 
 ---
 
-## ⚙️ x402 Payment Configuration
+## :gear: x402 Configuration
 
-All x402 settings live in your per-environment JSON config file:
+All x402 settings live in your per-environment JSON config file (`src/config/local-config.json`):
 
-| Key | What it does | Testnet default | Mainnet example |
-|:----|:------------|:----------------|:----------------|
-| `X402_FACILITATOR_URL` | Payment facilitator | `https://x402.org/facilitator` | `https://api.cdp.coinbase.com/platform/v2/x402` |
-| `X402_NETWORK` | Blockchain network | `eip155:84532` (Sepolia) | `eip155:8453` (Base) |
-| `X402_PAY_TO` | Your deposit address | `0xdAC6...` | Your address |
-| `X402_USDC_CONTRACT` | USDC token contract | `0x036CbD...` (test) | `0x833589...` (mainnet) |
-| `X402_EASTER_EGG_PRICE` | Price in base units | `50000` ($0.05) | `50000` ($0.05) |
-| `X402_CDP_API_KEY_ID` | CDP API key | (empty) | From [CDP portal](https://docs.cdp.coinbase.com/) |
-| `X402_CDP_API_KEY_SECRET` | CDP API secret | (empty) | From CDP portal |
+| Key | What it does |
+|:----|:------------|
+| `X402_FACILITATOR_URL` | Payment facilitator endpoint |
+| `X402_NETWORK` | Blockchain network (CAIP-2 format) |
+| `X402_PAY_TO` | Deposit address for payments |
+| `X402_USDC_CONTRACT` | USDC token contract address |
+| `X402_EASTER_EGG_PRICE` | Price in base units (50000 = $0.05) |
+| `X402_CDP_API_KEY_ID` | CDP API key (mainnet only) |
+| `X402_CDP_API_KEY_SECRET` | CDP API secret (mainnet only) |
 
 **Two facilitators are supported:**
 
-| Facilitator | Networks | API key | Cost |
-|:------------|:---------|:--------|:-----|
-| [x402.org](https://x402.org) | Base Sepolia (testnet) | Not needed | Free |
-| [CDP](https://docs.cdp.coinbase.com/x402/welcome) | Base, Solana, Polygon (mainnet) | Required | 1,000 free tx/month |
+| Facilitator | Networks | API key required | Cost |
+|:------------|:---------|:-----------------|:-----|
+| [x402.org](https://x402.org) | Base Sepolia (testnet) | No | Free |
+| [CDP](https://docs.cdp.coinbase.com/x402/welcome) | Base, Solana, Polygon | Yes | 1,000 free tx/month |
 
-The default config uses x402.org (testnet). Switch to CDP for mainnet by updating the config values and adding your CDP API keys.
+Pre-built config files are provided for both:
+
+| Config file | What it includes |
+|:------------|:----------------|
+| `local-example-config.json` | x402 on Base Sepolia (testnet) |
+| `local-full-example-config.json` | Same + PostgreSQL + Redis |
+
+To change a value, edit your `local-config.json` and restart the app.
 
 ---
 
-## 🏗️ Architecture
+## :building_construction: Architecture
 
 ```
 FastAPI app (port 8080)
-│
-├── /health                     🔓 Free
-├── /docs                       🖥️ Swagger UI (for humans)
-├── /openapi.json               🤖 OpenAPI 3.0 (for agents)
-│
-├── /api/v1/
-│   ├── /docs/tools             🤖 MCP tool catalog (for agents)
-│   ├── /echo                   🔓 Free -- request reflection
-│   ├── /items/*                🔑 Auth-gated -- CRUD demo
-│   └── /easter-egg             💰 x402-gated -- $0.05 USDC on Base
-│
-└── /mcp                        🤖 MCP Streamable HTTP transport
-    ├── echo                    🔓 Free
-    ├── items_*                 🔑 Auth-gated
-    └── easter_egg              💰 x402-gated
+|
++-- /health                     :unlock: Free
++-- /docs                       :desktop_computer: Swagger UI (for humans)
++-- /openapi.json               :robot: OpenAPI 3.0 (for agents)
+|
++-- /api/v1/                    Free + auth-gated
+|   +-- /docs/tools             :robot: MCP tool catalog (for agents)
+|   +-- /echo                   :unlock: Free -- request reflection
+|   +-- /items/*                :key: Auth-gated -- CRUD demo
+|
++-- /api/x402/                  Payment-gated
+|   +-- /easter-egg             :moneybag: $0.05 USDC on Base
+|
++-- /mcp                        :robot: MCP Streamable HTTP transport
+    +-- echo                    :unlock: Free
+    +-- items_*                 :key: Auth-gated
+    +-- easter_egg              :moneybag: x402-gated
 ```
 
 REST and MCP serve the same business logic on the same port. Agents choose their preferred protocol.
 
 ---
 
-## ➕ Adding Your Own Endpoints
+## :heavy_plus_sign: Adding Your Own Endpoints
 
 ### REST endpoint
 
@@ -251,7 +279,7 @@ REST and MCP serve the same business logic on the same port. Agents choose their
    api_router.include_router(your_router, tags=["your-tag"])
    ```
 
-> 💡 Pydantic response models and docstrings are automatically picked up by the OpenAPI spec and Swagger UI. No manual documentation step.
+> :bulb: Pydantic response models and docstrings are automatically picked up by the OpenAPI spec and Swagger UI.
 
 ### MCP tool
 
@@ -277,7 +305,7 @@ Add the route pattern to `x402_routes` in `src/app.py`. The official x402 SDK mi
 
 ---
 
-## 🐘 Full Stack Mode
+## :elephant: Full Stack Mode
 
 The default setup runs just the app -- no database, no cache. When you need PostgreSQL and Redis:
 
@@ -286,15 +314,15 @@ cp src/config/local-full-example-config.json src/config/local-config.json
 docker compose --profile full up -d --build
 ```
 
-The `full` profile starts PostgreSQL 16 and Redis 7 alongside the app. The config loader validates that DB and Redis keys are properly set when they're present in your config file.
+The `full` profile starts PostgreSQL 16 and Redis 7 alongside the app.
 
 ---
 
-## ☁️ Deploy to GCP
+## :cloud: Deploy to GCP
 
 ### Bootstrap
 
-When you're ready to deploy, run the bootstrap script to replace placeholder values across Terraform, CI/CD, and config files:
+When you're ready to deploy, run the bootstrap script to replace placeholder values:
 
 ```bash
 # For agents (non-interactive):
@@ -313,11 +341,11 @@ terraform plan -var-file=environment-dev.tfvars
 terraform apply -var-file=environment-dev.tfvars
 ```
 
-See `infra/terraform/SETUP.md` for prerequisites (GCP project, state bucket, OIDC workload identity).
+See `infra/terraform/SETUP.md` for prerequisites.
 
 ### CI/CD
 
-GitHub Actions workflow at `.github/workflows/deploy-cloudrun.yaml`. Manual trigger by default -- uncomment the push or PR triggers in the YAML when ready.
+GitHub Actions workflow at `.github/workflows/deploy-cloudrun.yaml`. Manual trigger by default -- uncomment the push or PR triggers when ready.
 
 Required GitHub secrets:
 - `GCP_WORKLOAD_IDENTITY_PROVIDER`
@@ -325,32 +353,34 @@ Required GitHub secrets:
 
 ---
 
-## 📝 Configuration Reference
+## :pencil: Configuration Reference
 
 All config lives in per-environment JSON files at `src/config/`. Only two env vars: `ENVIRONMENT` (selects config file) and `GCP_PROJECT_ID` (for Secret Manager).
 
 | File | Purpose |
 |:-----|:--------|
-| `local-example-config.json` | Local dev (minimal, x402 only) |
-| `local-full-example-config.json` | Local dev (full stack with DB + Redis) |
+| `local-example-config.json` | Testnet (Base Sepolia) |
+| `local-full-example-config.json` | Testnet + PostgreSQL + Redis |
 | `test-config.json` | pytest |
 | `dev-config.json` | Development (Secret Manager refs) |
 | `prod-config.json` | Production (Secret Manager refs) |
 
-> 💡 Copy an example to `local-config.json` to get started. This file is gitignored -- your secrets stay local.
+> :bulb: Copy an example to `local-config.json` to get started. This file is gitignored -- your secrets stay local.
 
 **Key categories** in `configuration-keys.json`:
 
 | Category | Behavior |
 |:---------|:---------|
 | `required` | Always validated at startup. App fails without them. |
-| `full_app_keys` | Validated only if present in your config. Absent = app runs without those features. Present but empty = startup fails (catches misconfiguration). |
+| `full_app_keys` | Validated only if present in your config. Absent = app runs without those features. Present but empty = startup fails. |
 
 Secret Manager syntax: `"secret:secret-name:property"`
 
+See [docs/configuration.md](docs/configuration.md) for the full configuration guide, including GCP Secret Manager setup for production. AWS support is coming soon.
+
 ---
 
-## 📁 Project Structure
+## :open_file_folder: Project Structure
 
 ```
 src/
@@ -390,7 +420,7 @@ scripts/                    x402 payment test scripts
 
 ---
 
-## 🛠️ Built With
+## :hammer_and_wrench: Built With
 
 | Component | Technology |
 |:----------|:-----------|
@@ -404,7 +434,7 @@ scripts/                    x402 payment test scripts
 
 ---
 
-## 📄 License
+## :page_facing_up: License
 
 Distributed under the MIT License.
 

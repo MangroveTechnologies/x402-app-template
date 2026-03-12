@@ -10,23 +10,20 @@ curl http://localhost:8080/health
 
 # Run tests
 ENVIRONMENT=test pytest tests/ -v
-
-# Run specific test markers
-ENVIRONMENT=test pytest tests/ -m fast -v
-ENVIRONMENT=test pytest tests/ -m integration -v
 ```
 
 ## What This Is
 
-FastAPI + MCP service template for GCP Cloud Run. Dual protocol (REST + MCP on single port), three-tier access control, Terraform IaC, OIDC CI/CD.
+FastAPI + MCP service template with x402 payments on Base. Dual protocol (REST + MCP on single port), three-tier access control, Terraform IaC, OIDC CI/CD.
 
 ## Architecture
 
 Single FastAPI process serving:
-- REST API at `/api/v1/*`
+- REST API at `/api/v1/*` (free + auth-gated)
+- x402 API at `/api/x402/*` (payment-gated)
 - MCP server at `/mcp` (Streamable HTTP via FastMCP)
 - Health check at `/health`
-- Auto-documentation at `/docs` (Swagger, for humans), `/openapi.json` (OpenAPI 3.0, for agents), `/api/v1/docs/tools` (MCP tool catalog, for agents)
+- Auto-docs at `/docs`, `/openapi.json`, `/api/v1/docs/tools`
 
 ### Three-Tier Access Model
 
@@ -36,85 +33,67 @@ Single FastAPI process serving:
 | Auth-gated | 401 | OK | 401 |
 | x402-gated | 402 | OK (free) | OK (paid) |
 
-API key holders bypass all payment requirements.
+## Routing Convention
 
-## Project Structure
-
-```
-src/
-  app.py              -- FastAPI factory, MCP mount
-  config.py           -- Config singleton
-  health.py           -- Health check
-  api/router.py       -- REST router
-  api/routes/         -- Endpoint modules
-  services/           -- Business logic
-  mcp/server.py       -- FastMCP instance
-  mcp/tools.py        -- MCP tool definitions
-  shared/auth/        -- API key middleware
-  shared/x402/        -- x402 payment middleware
-  shared/db/          -- PostgreSQL utils
-  config/             -- Per-env JSON configs
-tests/                -- pytest tests
-infra/terraform/      -- GCP infrastructure
-```
+- `/api/v1/*` -- Free and auth-gated endpoints
+- `/api/x402/*` -- x402 payment-gated endpoints
+- `/mcp` -- MCP tools (all tiers)
 
 ## Configuration
 
 - `ENVIRONMENT` env var selects config file (local/dev/test/prod)
-- JSON files in `src/config/` with `secret:name:property` syntax for Secret Manager
-- All required keys validated at startup (fails fast on missing keys)
+- JSON files in `src/config/` with `secret:name:property` syntax for GCP Secret Manager
+- Config file is the single source of truth -- edit and restart to change values
+- Required keys validated at startup (fails fast on missing keys)
+- Full_app_keys (DB, Redis) validated only if present in config file
+
+### Secrets
+
+- **Local/test**: Plain values in JSON config files
+- **Dev/prod**: Use `secret:name:property` syntax to resolve from GCP Secret Manager
+- **AWS**: Coming soon
 
 ## Key Conventions
 
-- Routes go in `src/api/routes/`, services in `src/services/`
-- MCP tools registered in `src/mcp/tools.py` via `register(server)` pattern
+- Free/auth routes in `src/api/routes/`, x402 routes also in `src/api/routes/`
+- Services in `src/services/`
+- MCP tools in `src/mcp/tools.py` via `register(server)` pattern
 - Both REST and MCP call the same service layer (no duplication)
 - Tests mirror source: `src/api/routes/items.py` -> `tests/test_items.py`
-- Test config uses plain values (no Secret Manager in tests)
 - `ENVIRONMENT=test` must be set before running pytest
 
 ## Adding Endpoints
 
-### New REST route
+### New free/auth route
 1. Create `src/api/routes/your_route.py` with `APIRouter`
 2. Create `src/services/your_service.py` with logic
-3. Include router in `src/api/router.py`
+3. Include in `api_router` in `src/api/router.py`
+
+### New x402-gated route
+1. Create route in `src/api/routes/`
+2. Include in `x402_router` in `src/api/router.py`
+3. Add route pattern to `x402_routes` in `src/app.py`
 
 ### New MCP tool
 1. Add tool function inside `register()` in `src/mcp/tools.py`
-2. Add `register_tool(ToolEntry(...))` call for the discovery catalog
+2. Add `register_tool(ToolEntry(...))` for the discovery catalog
 3. Call same service layer as REST
 
-### Auto-documentation
-- Pydantic response models and docstrings on routes are auto-included in OpenAPI spec and Swagger UI
-- MCP tools must be registered in both the FastMCP server and the discovery catalog (`src/mcp/registry.py`)
-- No manual doc build step -- everything is generated at runtime from code
-
-### Access control
-- Free: no decorator
-- Auth: validate `X-API-Key` header via `validate_api_key()`
-- x402: see `src/api/routes/easter_egg.py` for pattern
-
-## Deployment
-
-- **Local**: `docker compose up -d --build` (app + postgres + redis)
-- **Cloud**: Terraform provisions Cloud Run, AR, Secret Manager, IAM
 ## x402 Payment
 
-All x402 config is in per-environment JSON files (no env vars, no hardcoded values):
+All x402 config in per-environment JSON files:
 - `X402_FACILITATOR_URL` -- CDP production or x402.org testnet
 - `X402_NETWORK` -- `eip155:8453` (Base mainnet) or `eip155:84532` (Sepolia)
-- `X402_PAY_TO` -- deposit address for payments
-- `X402_USDC_CONTRACT` -- USDC token contract (auto-differs mainnet vs testnet)
+- `X402_PAY_TO` -- address that receives payments
+- `X402_USDC_CONTRACT` -- USDC token contract
 - `X402_EASTER_EGG_PRICE` -- price in base units (50000 = $0.05)
-- `X402_CDP_API_KEY_ID` / `X402_CDP_API_KEY_SECRET` -- for CDP facilitator (mainnet)
+- `X402_CDP_API_KEY_ID` / `X402_CDP_API_KEY_SECRET` -- for CDP facilitator
 
-To add a new x402-gated endpoint: add the route to `x402_routes` dict in `src/app.py`.
-The official x402 SDK middleware handles 402 response, verification, and settlement.
+Switch to mainnet: update `X402_FACILITATOR_URL` and related values in `local-config.json`, then `docker compose restart app`
 
 ## Deployment
 
-- **Local**: `docker compose up -d --build` (app + postgres + redis)
+- **Local**: `docker compose up -d --build` (app only, or `--profile full` for DB + Redis)
 - **Cloud**: Terraform provisions Cloud Run, AR, Secret Manager, IAM
 - **CI/CD**: Manual trigger via GitHub Actions. Uncomment push/PR triggers in workflow when ready.
 

@@ -1,16 +1,13 @@
 """FastAPI application factory.
 
 Serves dual protocols on a single port:
-- REST API at /api/v1/* with OpenAPI 3.0 docs at /docs and /openapi.json
+- REST API at /api/v1/* (free + auth) and /api/x402/* (payment-gated)
 - MCP server at /mcp (Streamable HTTP transport)
+- OpenAPI docs at /docs and /openapi.json
 
-x402 payment middleware (official Coinbase SDK) protects /api/v1/easter-egg.
+x402 payment middleware (official Coinbase SDK) protects /api/x402/*.
 All config loaded from per-environment JSON via app_config singleton.
-
-Auto-documentation:
-- Swagger UI: /docs (for humans)
-- OpenAPI spec: /openapi.json (for agents)
-- MCP tool catalog: /api/v1/docs/tools (for agents)
+Any config value can be overridden at runtime via env var of the same name.
 """
 from contextlib import asynccontextmanager
 
@@ -18,7 +15,7 @@ from fastapi import FastAPI, Request
 
 from src.config import app_config
 from src.health import health_payload
-from src.api.router import api_router
+from src.api.router import api_router, x402_router
 from src.shared.x402.config import (
     get_facilitator_url, get_network, get_pay_to,
     get_cdp_api_key_id, get_cdp_api_key_secret,
@@ -77,13 +74,12 @@ def _setup_x402():
     facilitator = HTTPFacilitatorClient(config=fc_config)
     server = x402ResourceServer(facilitator)
     register_exact_evm_server(server)
-    # Register V1 network names for CDP facilitator compatibility
     v1_scheme = ExactEvmScheme()
     server.register("base", v1_scheme)
     server.register("base-sepolia", v1_scheme)
 
     routes = {
-        "GET /api/v1/easter-egg": {
+        "GET /api/x402/easter-egg": {
             "accepts": {
                 "scheme": "exact",
                 "network": network,
@@ -103,7 +99,6 @@ x402_handler = _setup_x402()
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    # Mount MCP server
     from src.mcp.server import create_mcp_server
     mcp_server = create_mcp_server()
     application.mount("/mcp", mcp_server.streamable_http_app())
@@ -131,18 +126,13 @@ app = FastAPI(
         {"name": "discovery", "description": "API and tool discovery endpoints (free, no auth)"},
         {"name": "echo", "description": "Echo/reflect endpoints (free, no auth)"},
         {"name": "items", "description": "Items CRUD (auth-gated, requires API key)"},
-        {"name": "easter-egg", "description": "Easter egg endpoint (x402-gated, $0.05 USDC on Base)"},
+        {"name": "x402", "description": "x402 payment-gated endpoints"},
     ],
 )
 
 
 @app.middleware("http")
 async def x402_middleware(request: Request, call_next):
-    """x402 payment middleware -- protects easter-egg endpoint.
-
-    API key holders bypass payment. This middleware only intercepts
-    requests without an API key.
-    """
     api_key = request.headers.get("x-api-key")
     if api_key:
         return await call_next(request)
@@ -150,6 +140,7 @@ async def x402_middleware(request: Request, call_next):
 
 
 app.include_router(api_router)
+app.include_router(x402_router)
 
 
 @app.get(

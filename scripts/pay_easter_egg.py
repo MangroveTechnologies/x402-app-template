@@ -1,13 +1,14 @@
-"""Simple interactive x402 payment script.
+"""Interactive x402 payment script.
 
-Step through the x402 payment flow manually to see exactly what happens.
+Step through the x402 payment flow manually. All config values are loaded
+from the app's config system (src/config/{ENVIRONMENT}-config.json).
 
 Usage:
-    python scripts/pay_easter_egg.py
+    ENVIRONMENT=local python scripts/pay_easter_egg.py
 
 Requires:
-    - MangroveMarkets/.env with WALLET_SECRET
-    - MangroveMarkets-MCP-Server/src/shared/config/local-config.json with CDP_API_KEY_ID + CDP_API_KEY_SECRET
+    - src/config/local-config.json with x402 settings
+    - WALLET_SECRET env var or in MangroveMarkets/.env
 """
 import asyncio
 import base64
@@ -15,34 +16,40 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
-from urllib.parse import urlparse
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+os.environ.setdefault("ENVIRONMENT", "local")
 
 
-def load_secrets():
-    """Load CDP keys and wallet secret from sibling project configs."""
-    base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+def load_wallet_secret():
+    """Load wallet secret from env or MangroveMarkets/.env."""
+    secret = os.environ.get("WALLET_SECRET")
+    if secret:
+        return secret
 
-    # CDP keys from MCP-Server
-    config_path = os.path.join(base, "MangroveMarkets-MCP-Server", "src", "shared", "config", "local-config.json")
-    with open(config_path) as f:
-        config = json.load(f)
-
-    # Wallet secret from MangroveMarkets
-    env_path = os.path.join(base, "MangroveMarkets", ".env")
-    with open(env_path) as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, value = line.split("=", 1)
-                value = value.strip().strip('"').strip("'")
-                if key.strip() == "WALLET_SECRET":
-                    config["WALLET_SECRET"] = value
-
-    return config
+    env_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        "MangroveMarkets", ".env",
+    )
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    value = value.strip().strip('"').strip("'")
+                    if key.strip() == "WALLET_SECRET":
+                        return value
+    return None
 
 
 def setup_server():
-    """Create the FastAPI app with x402 middleware."""
+    """Create the FastAPI app with x402 middleware using app config."""
+    from src.config import app_config
+    from src.shared.x402.config import (
+        get_facilitator_url, get_network, get_pay_to,
+        get_cdp_api_key_id, get_cdp_api_key_secret,
+    )
     from fastapi import FastAPI, Request
     from x402.http.middleware.fastapi import payment_middleware
     from x402.http import HTTPFacilitatorClient
@@ -50,43 +57,51 @@ def setup_server():
     from x402 import x402ResourceServer
     from x402.mechanisms.evm.exact import register_exact_evm_server
     from x402.mechanisms.evm.exact.server import ExactEvmScheme
-    from cdp.auth import get_auth_headers, GetAuthHeadersOptions
+    from x402.http.types import RouteConfig, PaymentOption as HTTPPaymentOption
 
-    config = load_secrets()
-    CDP_URL = "https://api.cdp.coinbase.com/platform/v2/x402"
-    PAY_TO = "0xdAC6843ccA8B8c127d9d10EdB327fb0ddb2a5576"
-    parsed = urlparse(CDP_URL)
+    facilitator_url = get_facilitator_url()
+    network = get_network()
+    pay_to = get_pay_to()
 
-    def create_headers():
-        headers_map = {}
-        for endpoint, method in [("verify", "POST"), ("settle", "POST"), ("supported", "GET")]:
-            path = f"{parsed.path}/{endpoint}"
-            h = get_auth_headers(GetAuthHeadersOptions(
-                api_key_id=config["CDP_API_KEY_ID"],
-                api_key_secret=config["CDP_API_KEY_SECRET"],
-                request_method=method,
-                request_host=parsed.hostname,
-                request_path=path,
-            ))
-            headers_map[endpoint] = h
-        headers_map["list"] = headers_map.pop("supported")
-        return headers_map
+    # Build CDP auth if keys configured
+    auth_provider = None
+    cdp_key_id = get_cdp_api_key_id()
+    cdp_key_secret = get_cdp_api_key_secret()
+    if cdp_key_id and cdp_key_secret:
+        from urllib.parse import urlparse
+        from cdp.auth import get_auth_headers, GetAuthHeadersOptions
+        parsed = urlparse(facilitator_url)
 
-    auth = CreateHeadersAuthProvider(create_headers)
-    facilitator = HTTPFacilitatorClient(config=FacilitatorConfig(url=CDP_URL, auth_provider=auth))
+        def create_headers():
+            headers_map = {}
+            for endpoint, method in [("verify", "POST"), ("settle", "POST"), ("supported", "GET")]:
+                path = f"{parsed.path}/{endpoint}"
+                h = get_auth_headers(GetAuthHeadersOptions(
+                    api_key_id=cdp_key_id, api_key_secret=cdp_key_secret,
+                    request_method=method, request_host=parsed.hostname, request_path=path,
+                ))
+                headers_map[endpoint] = h
+            headers_map["list"] = headers_map.pop("supported")
+            return headers_map
+
+        auth_provider = CreateHeadersAuthProvider(create_headers)
+
+    fc_config = FacilitatorConfig(url=facilitator_url)
+    if auth_provider:
+        fc_config = FacilitatorConfig(url=facilitator_url, auth_provider=auth_provider)
+
+    facilitator = HTTPFacilitatorClient(config=fc_config)
     server = x402ResourceServer(facilitator)
     register_exact_evm_server(server)
     server.register("base", ExactEvmScheme())
+    server.register("base-sepolia", ExactEvmScheme())
 
     routes = {
-        "GET /api/v1/easter-egg": {
-            "accepts": {
-                "scheme": "exact",
-                "network": "eip155:8453",
-                "payTo": PAY_TO,
-                "price": "$0.05",
-            },
-        },
+        "GET /api/x402/easter-egg": RouteConfig(
+            accepts=HTTPPaymentOption(
+                scheme="exact", network=network, pay_to=pay_to, price="$0.05",
+            ),
+        ),
     }
 
     app = FastAPI()
@@ -96,40 +111,47 @@ def setup_server():
     async def x402_mw(request: Request, call_next):
         return await mw(request, call_next)
 
-    @app.get("/api/v1/easter-egg")
+    @app.get("/api/x402/easter-egg")
     async def easter_egg():
-        return {
-            "message": "Thank you for supporting the project and strengthening the ecosystem",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+        from src.services.easter_egg import get_easter_egg
+        return get_easter_egg()
 
-    return app, config
+    return app
 
 
 async def main():
+    from src.shared.x402.config import get_facilitator_url, get_network, get_pay_to
+
+    wallet_secret = load_wallet_secret()
+    if not wallet_secret:
+        print("ERROR: WALLET_SECRET not found.")
+        sys.exit(1)
+
     print()
     print("  x402 Payment Flow -- Step by Step")
     print("  ==================================")
+    print(f"  Network:     {get_network()}")
+    print(f"  Facilitator: {get_facilitator_url()}")
+    print(f"  Pay to:      {get_pay_to()}")
     print()
 
-    # -- Setup --
-    print("  Loading config and creating server...")
-    app, config = setup_server()
-    print("  Done.")
+    print("  Loading server...")
+    app = setup_server()
+    print("  Ready.")
     print()
 
     import httpx
     from eth_account import Account
 
-    account = Account.from_key(config["WALLET_SECRET"])
+    account = Account.from_key(wallet_secret)
     asgi = httpx.ASGITransport(app=app)
 
-    # -- Step 1: Hit the endpoint with no credentials --
-    input("  Step 1: Hit /api/v1/easter-egg with NO credentials. Press Enter...")
+    # -- Step 1 --
+    input("  Step 1: Hit /api/x402/easter-egg with NO credentials. Press Enter...")
     print()
 
     async with httpx.AsyncClient(transport=asgi, base_url="http://test") as client:
-        resp = await client.get("/api/v1/easter-egg")
+        resp = await client.get("/api/x402/easter-egg")
 
     print(f"  Response: HTTP {resp.status_code}")
     if resp.status_code == 402:
@@ -141,23 +163,14 @@ async def main():
             accept = reqs["accepts"][0]
             print(f"  --> Network: {accept['network']}")
             print(f"  --> Pay to:  {accept['payTo']}")
-            print(f"  --> Asset:   {accept.get('asset', 'USDC')}")
             amt = accept.get("maxAmountRequired", "?")
-            print(f"  --> Amount:  {amt} base units = ${int(amt)/1_000_000:.2f} USDC")
+            if amt != "?":
+                print(f"  --> Amount:  {amt} base units = ${int(amt)/1_000_000:.2f} USDC")
     print()
 
-    # -- Step 2: Hit with API key --
-    input("  Step 2: Hit with API key (free access for subscribers). Press Enter...")
-    print()
-
-    # Note: middleware doesn't check API keys -- that's app-level.
-    # For this demo, we show the payment path only.
-    print("  (API key bypass is handled by the app middleware, not shown in this script)")
-    print()
-
-    # -- Step 3: Pay with x402 --
-    print(f"  Step 3: Pay $0.05 USDC on Base mainnet from {account.address}")
-    input("  This costs REAL MONEY. Press Enter to proceed (or Ctrl+C to abort)...")
+    # -- Step 2 --
+    print(f"  Step 2: Pay $0.05 USDC from {account.address}")
+    input("  This costs REAL MONEY on mainnet. Press Enter to proceed (Ctrl+C to abort)...")
     print()
 
     from x402 import x402Client
@@ -167,12 +180,11 @@ async def main():
 
     x402_client = x402Client()
     register_exact_evm_client(x402_client, EthAccountSigner(account))
-
     x402_transport = x402AsyncTransport(x402_client, transport=asgi)
 
     print("  Signing payment and sending...")
     async with httpx.AsyncClient(transport=x402_transport, base_url="http://test") as client:
-        resp = await client.get("/api/v1/easter-egg")
+        resp = await client.get("/api/x402/easter-egg")
 
     print()
     print(f"  Response: HTTP {resp.status_code}")
@@ -182,27 +194,23 @@ async def main():
         print(f"  Message: {data['message']}")
         print()
 
-        # Settlement info
         pr = resp.headers.get("payment-response") or resp.headers.get("x-payment-response")
         if pr:
             padded = pr + "=" * (4 - len(pr) % 4)
             settlement = json.loads(base64.b64decode(padded))
-            print("  Settlement details:")
+            print("  Settlement:")
             print(f"    Payer:       {settlement.get('payer', 'N/A')}")
             print(f"    Network:     {settlement.get('network', 'N/A')}")
             print(f"    Transaction: {settlement.get('transaction', 'N/A')}")
-            print(f"    Success:     {settlement.get('success', 'N/A')}")
             tx = settlement.get("transaction", "")
             if tx:
                 print()
                 print(f"  View on BaseScan: https://basescan.org/tx/{tx}")
-                print(f"  (Look for USDC token transfer, not ETH -- the facilitator sends the tx)")
     else:
         print(f"  Failed: {resp.text[:300]}")
 
     print()
     print("  Done.")
-    print()
 
 
 if __name__ == "__main__":
