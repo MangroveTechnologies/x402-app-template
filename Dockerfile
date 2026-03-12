@@ -18,4 +18,4 @@ COPY pyproject.toml ./
 ENV PORT=8080
 EXPOSE 8080
 
-CMD ["uvicorn", "src.app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2", "--timeout-keep-alive", "120"]
+CMD ["sh", "-c", "cp -n src/config/local-example-config.json src/config/local-config.json 2>/dev/null; exec uvicorn src.app:app --host 0.0.0.0 --port 8080 --workers 2 --timeout-keep-alive 120"]

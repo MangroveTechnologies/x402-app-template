@@ -1,8 +1,35 @@
 # x402-app-template
 
-FastAPI + MCP service template for GCP Cloud Run. Dual protocol (REST + MCP), three-tier access control (free, auth-gated, x402-gated), auto-documentation, Terraform IaC, OIDC CI/CD.
+FastAPI + MCP service template with built-in x402 payments on Base. Three-tier access control (free, auth-gated, x402-gated), dual protocol (REST + MCP), auto-documentation, Terraform IaC, GCP Cloud Run.
 
 Designed for agents first, humans second.
+
+## Try the x402 Payment Flow
+
+The template ships with a working x402-gated endpoint. Hit it and see what happens:
+
+```bash
+# No credentials -- server returns 402 with payment requirements
+curl -s http://localhost:8080/api/v1/easter-egg | python3 -m json.tool
+```
+
+The 402 response tells the agent exactly how to pay: network, asset, amount, and facilitator URL. An x402-enabled client (like the Coinbase x402 SDK) handles payment automatically -- sign, retry, done.
+
+With an API key, the same endpoint is free:
+
+```bash
+curl -s http://localhost:8080/api/v1/easter-egg -H "X-API-Key: dev-key-1"
+```
+
+Returns: `"Thank you for supporting the project and strengthening the ecosystem"`
+
+This is the three-tier access model in action:
+
+| Tier | No credentials | API key | x402 payment |
+|------|---------------|---------|-------------|
+| **Free** | OK | OK | OK |
+| **Auth-gated** | 401 | OK | 401 |
+| **x402-gated** | 402 + payment requirements | OK (free) | OK (paid) |
 
 ## Quick Start
 
@@ -23,34 +50,49 @@ cd my-service
 
 ```bash
 cp src/config/local-example-config.json src/config/local-config.json
+# Edit src/config/local-config.json -- set X402_PAY_TO to your deposit address
 docker compose up -d --build
 ```
 
-### 3. Verify
+### 3. Verify all three tiers
 
 ```bash
-# Health check (free)
+# Free tier -- no credentials needed
 curl http://localhost:8080/health
+curl http://localhost:8080/api/v1/echo?hello=world
 
-# Echo (free)
-curl -X POST http://localhost:8080/api/v1/echo -H "Content-Type: application/json" -d '{"hello":"world"}'
-
-# Create item (auth-gated -- requires API key)
+# Auth tier -- requires API key
 curl -X POST http://localhost:8080/api/v1/items \
   -H "Content-Type: application/json" \
   -H "X-API-Key: dev-key-1" \
   -d '{"name":"Widget","description":"A widget"}'
 
-# Easter egg (x402-gated -- returns 402 payment requirements)
+# x402 tier -- returns 402 with payment requirements (or free with API key)
 curl http://localhost:8080/api/v1/easter-egg
-
-# Easter egg (free with API key)
 curl http://localhost:8080/api/v1/easter-egg -H "X-API-Key: dev-key-1"
 ```
 
+## x402 Payment Configuration
+
+All x402 settings live in the per-environment JSON config files (`src/config/*.json`):
+
+| Key | Description | Example (testnet) | Example (mainnet) |
+|-----|-------------|-------------------|-------------------|
+| `X402_FACILITATOR_URL` | Coinbase facilitator endpoint | `https://x402.org/facilitator` | `https://api.cdp.coinbase.com/platform/v2/x402` |
+| `X402_NETWORK` | CAIP-2 chain identifier | `eip155:84532` (Sepolia) | `eip155:8453` (Base) |
+| `X402_PAY_TO` | Your deposit address | `0xdAC6...` | `0xdAC6...` |
+| `X402_USDC_CONTRACT` | USDC token contract | `0x036CbD...` (test) | `0x833589...` (mainnet) |
+| `X402_EASTER_EGG_PRICE` | Price in base units (6 decimals) | `50000` ($0.05) | `50000` ($0.05) |
+| `X402_CDP_API_KEY_ID` | CDP API key (mainnet only) | empty | `secret:...:cdp_api_key_id` |
+| `X402_CDP_API_KEY_SECRET` | CDP API secret (mainnet only) | empty | `secret:...:cdp_api_key_secret` |
+
+**Two facilitators supported:**
+- **x402.org** (testnet) -- No API key needed. Base Sepolia only. Free.
+- **CDP** (production) -- Requires CDP API keys. Base mainnet, Solana, Polygon. 1,000 free tx/month.
+
 ## Discovery and Documentation
 
-Both agents and humans can discover the full API programmatically. All discovery endpoints are free, no auth required.
+Both agents and humans can discover the full API programmatically. All discovery endpoints are free.
 
 ### For Agents
 
@@ -59,53 +101,20 @@ Both agents and humans can discover the full API programmatically. All discovery
 | `GET /openapi.json` | OpenAPI 3.0 JSON | Full REST API spec -- every route, parameter, response model |
 | `GET /api/v1/docs/tools` | JSON | MCP tool catalog -- names, parameters, access tiers, pricing |
 
-An agent should call these two endpoints to fully understand the service before making any other requests or connecting via MCP.
+An agent should call these two endpoints to understand the service before making requests or connecting via MCP.
 
-**Example: discover MCP tools**
 ```bash
 curl http://localhost:8080/api/v1/docs/tools | python3 -m json.tool
-```
-
-Returns:
-```json
-{
-  "tools": [
-    {
-      "name": "echo",
-      "description": "Echo a message back. Free, no auth required.",
-      "access": "free",
-      "parameters": [{"name": "message", "type": "string", "required": false}]
-    },
-    {
-      "name": "easter_egg",
-      "description": "Get the easter egg message. Costs $0.05 USDC on Base, or free with API key.",
-      "access": "x402",
-      "price": "$0.05 USDC",
-      "network": "base",
-      "parameters": []
-    }
-  ],
-  "total": 5,
-  "access_tiers": {
-    "free": "No credentials required",
-    "auth": "Requires X-API-Key header",
-    "x402": "Requires x402 payment (or API key for free access)"
-  }
-}
 ```
 
 ### For Humans
 
 | Endpoint | What it provides |
 |----------|-----------------|
-| `/docs` | Swagger UI -- interactive API explorer with try-it-out |
-| `/redoc` | ReDoc -- clean API reference documentation |
+| `/docs` | Swagger UI -- interactive API explorer |
+| `/redoc` | ReDoc -- clean API reference |
 
-Open `http://localhost:8080/docs` in a browser to explore the API interactively.
-
-## What You Get
-
-### Architecture
+## Architecture
 
 ```
 FastAPI app (port 8080)
@@ -125,27 +134,17 @@ FastAPI app (port 8080)
         +-- easter_egg         (x402-gated)
 ```
 
-### Three-Tier Access Model
-
-| Tier | No credentials | API key | x402 payment |
-|------|---------------|---------|-------------|
-| Free | OK | OK | OK |
-| Auth-gated | 401 | OK | 401 |
-| x402-gated | 402 + payment requirements | OK (free) | OK (paid) |
-
-API key holders get full access to everything. Public agents pay per-call via x402 for gated endpoints.
-
 ### Infrastructure
 
 | Component | Technology |
 |-----------|-----------|
 | Framework | FastAPI + uvicorn |
 | MCP | FastMCP (Streamable HTTP at /mcp) |
+| Payments | x402 protocol (Base/USDC, Coinbase facilitator) |
 | Documentation | OpenAPI 3.0 (auto-generated from code) |
 | Database | PostgreSQL 16 (Cloud SQL in prod) |
 | Cache | Redis 7 |
 | Auth | API key (X-API-Key header) |
-| Payments | x402 protocol (Base/USDC) |
 | Config | Per-env JSON + GCP Secret Manager |
 | IaC | Terraform (Cloud Run, AR, SM, IAM) |
 | CI/CD | GitHub Actions (OIDC workload identity) |
@@ -163,7 +162,7 @@ API key holders get full access to everything. Public agents pay per-call via x4
    api_router.include_router(your_router, tags=["your-tag"])
    ```
 
-Pydantic response models and docstrings on your route functions are automatically picked up by the OpenAPI spec and Swagger UI. No extra documentation step needed.
+Pydantic response models and docstrings are automatically picked up by the OpenAPI spec and Swagger UI.
 
 ### MCP tool
 
@@ -190,7 +189,20 @@ Pydantic response models and docstrings on your route functions are automaticall
 
 - **Free**: No decorator needed
 - **Auth-gated**: Add `x_api_key: str = Header(None, alias="X-API-Key")` parameter and call `_require_auth(x_api_key)`
-- **x402-gated**: Use the easter_egg endpoint as a reference pattern
+- **x402-gated**: Add route to `x402_routes` dict in `src/app.py` -- the middleware handles 402/verify/settle
+
+## Configuration
+
+All config lives in per-environment JSON files at `src/config/`. No env vars for app config (only `ENVIRONMENT` and `GCP_PROJECT_ID` are env vars).
+
+| File | Environment | Secrets |
+|------|------------|---------|
+| `local-example-config.json` | Local dev template | Plain values |
+| `test-config.json` | pytest | Plain values |
+| `dev-config.json` | Development | Secret Manager refs |
+| `prod-config.json` | Production | Secret Manager refs |
+
+Secret Manager syntax: `"secret:secret-name:property"`
 
 ## Deploy
 
@@ -205,37 +217,19 @@ terraform apply -var-file=environment-dev.tfvars
 
 See `infra/terraform/SETUP.md` for prerequisites (GCP project, state bucket, OIDC setup).
 
-### CI/CD (ongoing)
+### CI/CD
 
-Push to `main` triggers GitHub Actions:
-1. Docker build (linux/amd64)
-2. Push to Artifact Registry
-3. Deploy to Cloud Run
+Manually trigger via GitHub Actions (workflow_dispatch). Uncomment push/PR triggers in `.github/workflows/deploy-cloudrun.yaml` when ready.
 
 Requires GitHub secrets:
 - `GCP_WORKLOAD_IDENTITY_PROVIDER`
 - `GCP_SERVICE_ACCOUNT_EMAIL`
 
-## Configuration
-
-Per-environment JSON files in `src/config/`:
-
-| File | Environment | Secrets |
-|------|------------|---------|
-| `local-example-config.json` | Local dev template | Plain values |
-| `test-config.json` | pytest | Plain values |
-| `dev-config.json` | Development | Secret Manager refs |
-| `prod-config.json` | Production | Secret Manager refs |
-
-Secret Manager reference syntax: `"secret:secret-name:property"`
-
-Required config keys: `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_PORT`, `DB_SSLMODE`, `CLOUD_SQL_CONNECTION_NAME`, `AUTH_ENABLED`, `API_KEYS`, `REDIS_URL`
-
 ## Project Structure
 
 ```
 src/
-  app.py                    -- FastAPI app, MCP mount, health check
+  app.py                    -- FastAPI app, x402 middleware, MCP mount
   config.py                 -- Config singleton (JSON + Secret Manager)
   health.py                 -- Health check payload
   api/
@@ -257,8 +251,8 @@ src/
     auth/
       middleware.py          -- API key validation
     x402/
+      config.py             -- Payment config (reads from app_config)
       middleware.py          -- x402 payment decorator
-      config.py             -- Payment config (chain, address, price)
       models.py             -- Payment data models
       facilitator.py        -- Facilitator HTTP client
       errors.py             -- x402 error hierarchy
@@ -269,11 +263,9 @@ src/
   config/
     configuration-keys.json -- Required config keys
     *.json                  -- Per-env config files
-tests/
-  conftest.py               -- Fixtures
-  test_*.py                 -- Test files (30 tests)
+tests/                      -- 30 tests
 infra/terraform/            -- Terraform IaC
-.github/workflows/          -- CI/CD
+.github/workflows/          -- CI/CD (manual trigger)
 init.sh                     -- Bootstrap (for agents)
 init-interactive.sh         -- Bootstrap (for humans)
 ```

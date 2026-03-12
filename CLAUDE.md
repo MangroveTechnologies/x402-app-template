@@ -99,14 +99,24 @@ infra/terraform/      -- GCP infrastructure
 
 - **Local**: `docker compose up -d --build` (app + postgres + redis)
 - **Cloud**: Terraform provisions Cloud Run, AR, Secret Manager, IAM
-- **CI/CD**: Push to main triggers GitHub Actions (OIDC -> build -> push -> deploy)
-
 ## x402 Payment
 
-- Chain: Base (EVM)
-- Asset: USDC
-- Facilitator: https://x402.org/facilitator
-- Easter egg: $0.05 to `0xdAC6843ccA8B8c127d9d10EdB327fb0ddb2a5576`
+All x402 config is in per-environment JSON files (no env vars, no hardcoded values):
+- `X402_FACILITATOR_URL` -- CDP production or x402.org testnet
+- `X402_NETWORK` -- `eip155:8453` (Base mainnet) or `eip155:84532` (Sepolia)
+- `X402_PAY_TO` -- deposit address for payments
+- `X402_USDC_CONTRACT` -- USDC token contract (auto-differs mainnet vs testnet)
+- `X402_EASTER_EGG_PRICE` -- price in base units (50000 = $0.05)
+- `X402_CDP_API_KEY_ID` / `X402_CDP_API_KEY_SECRET` -- for CDP facilitator (mainnet)
+
+To add a new x402-gated endpoint: add the route to `x402_routes` dict in `src/app.py`.
+The official x402 SDK middleware handles 402 response, verification, and settlement.
+
+## Deployment
+
+- **Local**: `docker compose up -d --build` (app + postgres + redis)
+- **Cloud**: Terraform provisions Cloud Run, AR, Secret Manager, IAM
+- **CI/CD**: Manual trigger via GitHub Actions. Uncomment push/PR triggers in workflow when ready.
 
 ---
 
