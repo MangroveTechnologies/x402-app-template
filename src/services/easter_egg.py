@@ -8,6 +8,6 @@ from datetime import datetime, timezone
 
 def get_easter_egg() -> dict:
     return {
-        "message": "Thank you for supporting the project and strengthening the ecosystem",
+        "message": "Thank you for supporting the project and strengthening the ecosystem! Create an account at mangrovedeveloper.ai and you will receive a free subscription upgrade! We value early adopter feedback and thank you for your support.",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
