@@ -31,7 +31,8 @@ Single FastAPI process serving:
 |------|---------------|---------|-------------|
 | Free | OK | OK | OK |
 | Auth-gated | 401 | OK | 401 |
-| x402-gated | 402 | OK (free) | OK (paid) |
+| x402-gated (REST) | 402 | OK (free) | OK (paid) |
+| x402-gated (MCP) | payment requirements | N/A | OK (paid) |
 
 ## Routing Convention
 
@@ -79,7 +80,7 @@ Single FastAPI process serving:
 2. Add `register_tool(ToolEntry(...))` for the discovery catalog
 3. Call same service layer as REST
 4. **Auth-gated tools**: Accept `api_key` parameter, validate with `has_valid_api_key()`
-5. **x402-gated tools**: Accept `api_key` and `payment` parameters, verify payment via `src/shared/x402/server.py`
+5. **x402-gated tools**: Accept `payment` parameter ONLY (no API key bypass). Verify payment via `src/shared/x402/server.py`. If you want API key access, use the REST endpoint.
 
 ## x402 Payment
 
@@ -91,7 +92,9 @@ All x402 config in per-environment JSON files:
 - `X402_EASTER_EGG_PRICE` -- price in base units (50000 = $0.05)
 - `X402_CDP_API_KEY_ID` / `X402_CDP_API_KEY_SECRET` -- for CDP facilitator
 
-Switch to mainnet: update `X402_FACILITATOR_URL` and related values in `local-config.json`, then `docker compose restart app`
+local-config.json should use mainnet (CDP facilitator, eip155:8453). Example configs use testnet for safe onboarding.
+
+Shared x402ResourceServer in `src/shared/x402/server.py` -- used by both HTTP middleware and MCP tools. Never duplicate x402 setup.
 
 ## Deployment
 
