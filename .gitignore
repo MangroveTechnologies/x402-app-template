@@ -45,4 +45,5 @@ docker-compose.override.yml
 
 # Internal docs (not for public repo)
 TEMPLATE-REVIEW.md
+ROADMAP.md
 docs/plans/
